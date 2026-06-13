@@ -7,7 +7,7 @@ export default async function handler(req, res) {
   try {
     const { image, prompt } = req.body;
 
-    const response = await fetch("https://ai.api.nvidia.com/v1/genai/qwen/qwen-image-edit", {
+    const response = await fetch("https://ai.api.nvidia.com/v1/images/edits", {
       method: "POST",
       headers: {
         "Authorization": "Bearer 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",
@@ -15,10 +15,11 @@ export default async function handler(req, res) {
         "Accept": "application/json"
       },
       body: JSON.stringify({
+        model: "qwen/qwen-image-edit",
         image: image,
         prompt: prompt,
-        guidance_scale: 7.5,
-        num_inference_steps: 50
+        n: 1,
+        response_format: "b64_json"
       })
     });
 
@@ -27,7 +28,7 @@ export default async function handler(req, res) {
       const data = JSON.parse(rawText);
       return res.status(response.status).json(data);
     } catch(e) {
-      return res.status(200).json({ raw: rawText, status: response.status });
+      return res.status(200).json({ raw: rawText, httpStatus: response.status });
     }
 
   } catch (err) {
