@@ -16,7 +16,10 @@ export default async function handler(req, res) {
       body: typeof req.body === "string" ? req.body : JSON.stringify(req.body)
     });
 
-    const data = await response.json();
+    const text = await response.text();
+    const cleaned = text.split("\n")
+      .find(line => line.startsWith("data: ") && !line.includes("[DONE]"));
+    const data = cleaned ? JSON.parse(cleaned.replace("data: ", "")) : JSON.parse(text);
     res.status(response.status).json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
