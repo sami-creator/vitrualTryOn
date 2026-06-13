@@ -13,7 +13,7 @@ export default async function handler(req, res) {
         "Content-Type": "application/json",
         "Accept": "application/json"
       },
-      body: JSON.stringify(req.body)
+      body: typeof req.body === "string" ? req.body : JSON.stringify(req.body)
     });
 
     const data = await response.json();
