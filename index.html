@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Virtual Try-On</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: auto; }
+    input, button, textarea { margin: 8px 0; padding: 8px; width: 100%; box-sizing: border-box; }
+    img { max-width: 100%; margin-top: 10px; }
+    .err { color: red; font-size: 13px; white-space: pre-wrap; }
+    .ok  { color: green; font-size: 13px; }
+    label { font-weight: bold; display: block; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h2>Virtual Try-On</h2>
+
+  <label>صورة الشخص:</label>
+  <input type="file" id="person" accept="image/*"/>
+
+  <label>وصف الملابس المطلوبة:</label>
+  <textarea id="prompt" rows="3" placeholder="مثال: ارتداء كراكو جزائري تقليدي باللون الأزرق"></textarea>
+
+  <button onclick="run()">تجربة</button>
+
+  <div id="status"></div>
+  <img id="result" style="display:none"/>
+
+  <script>
+    const API_KEY = "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";
+    const NVIDIA_URL = "/api/proxy";
+    // قائمة proxies للتجربة بالترتيب
+    const PROXIES = [
+      url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+      url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    ];
+
+    async function toBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload  = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function run() {
+      const person  = document.getElementById("person").files[0];
+      const prompt  = document.getElementById("prompt").value.trim();
+      const status  = document.getElementById("status");
+      const result  = document.getElementById("result");
+
+      console.log("== بدء العملية ==");
+
+      if (!person || !prompt) {
+        status.className = "err";
+        status.textContent = "يرجى تحديد الصورة وكتابة وصف الملابس";
+        return;
+      }
+
+      status.className = "";
+      status.textContent = "جاري التحويل والإرسال...";
+      result.style.display = "none";
+
+      try {
+        console.log("تحويل الصورة إلى base64...");
+        const base64 = await toBase64(person);
+        console.log("تم التحويل، نوع الصورة:", person.type);
+
+        const payload = {
+          model: "qwen/qwen-image-edit",
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "image_url",
+                  image_url: { url: base64 }
+                },
+                {
+                  type: "text",
+                  text: `قم بتعديل هذه الصورة: ${prompt}. حافظ على نفس الشخص والخلفية وغيّر الملابس فقط.`
+                }
+              ]
+            }
+          ],
+          max_tokens: 1024,
+          temperature: 0.7,
+          stream: false
+        };
+
+        console.log("إرسال الطلب إلى NVIDIA API...");
+        console.log("النموذج:", payload.model);
+
+        // محاولة الاتصال عبر proxies بالترتيب
+        let res, rawText, data;
+        let lastError = "";
+
+        for (let i = 0; i < PROXIES.length; i++) {
+          const proxyUrl = PROXIES[i](NVIDIA_URL);
+          console.log(`محاولة proxy ${i + 1}:`, proxyUrl);
+          try {
+            res = await fetch(proxyUrl, {
+              method: "POST",
+              headers: {
+                "Authorization": "Bearer " + API_KEY,
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+              },
+              body: JSON.stringify(payload)
+            });
+            rawText = await res.text();
+            console.log(`الرد الخام (proxy ${i+1}):`, rawText.slice(0, 300));
+            // تحقق أن الرد JSON وليس HTML
+            if (rawText.trimStart().startsWith("{") || rawText.trimStart().startsWith("[")) {
+              data = JSON.parse(rawText);
+              console.log("نجح proxy رقم", i + 1);
+              break;
+            } else {
+              lastError = `proxy ${i+1} أعاد محتوى غير JSON: ${rawText.slice(0, 100)}`;
+              console.warn(lastError);
+            }
+          } catch (fetchErr) {
+            lastError = `proxy ${i+1} فشل: ${fetchErr.message}`;
+            console.warn(lastError);
+          }
+        }
+
+        if (!data) throw new Error("فشلت جميع محاولات الاتصال.\n" + lastError);
+        console.log("الرد الكامل:", JSON.stringify(data, null, 2));
+
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status} — ${JSON.stringify(data)}`);
+        }
+
+        // محاولة استخراج الصورة من الرد
+        const content = data.choices?.[0]?.message?.content;
+        console.log("محتوى الرد:", content);
+
+        if (!content) throw new Error("لم يُعد النموذج أي محتوى");
+
+        // إذا كان الرد صورة base64
+        if (typeof content === "string" && content.startsWith("data:image")) {
+          result.src = content;
+          result.style.display = "block";
+          status.className = "ok";
+          status.textContent = "تمت العملية بنجاح!";
+        }
+        // إذا كان الرد نصاً (وصف) — نعرضه
+        else if (typeof content === "string") {
+          status.className = "ok";
+          status.textContent = "رد النموذج: " + content;
+          console.log("النموذج أعاد نصاً وليس صورة");
+        }
+        // إذا كان array
+        else if (Array.isArray(content)) {
+          const imgPart = content.find(p => p.type === "image_url");
+          const txtPart = content.find(p => p.type === "text");
+          if (imgPart) {
+            result.src = imgPart.image_url?.url;
+            result.style.display = "block";
+            status.className = "ok";
+            status.textContent = "تمت العملية بنجاح!";
+          } else if (txtPart) {
+            status.className = "ok";
+            status.textContent = "رد النموذج: " + txtPart.text;
+          }
+        }
+
+      } catch(e) {
+        console.error("خطأ:", e);
+        status.className  = "err";
+        status.textContent = "خطأ: " + e.message;
+      }
+    }
+  </script>
+</body>
+</html>
