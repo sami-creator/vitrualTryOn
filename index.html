@@ -4,12 +4,13 @@
   <meta charset="UTF-8"/>
   <title>Virtual Try-On</title>
   <style>
-    body { font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: auto; }
-    input, button, textarea { margin: 8px 0; padding: 8px; width: 100%; box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: auto; background: #111; color: #eee; }
+    input, button, textarea { margin: 8px 0; padding: 8px; width: 100%; box-sizing: border-box; background: #222; color: #eee; border: 1px solid #444; }
+    button { background: #0070f3; color: white; cursor: pointer; font-size: 16px; }
     img { max-width: 100%; margin-top: 10px; }
-    .err { color: red; font-size: 13px; white-space: pre-wrap; }
-    .ok  { color: green; font-size: 13px; }
     label { font-weight: bold; display: block; margin-top: 12px; }
+    #log { margin-top: 16px; font-size: 12px; font-family: monospace; }
+    .log-line { padding: 3px 0; border-bottom: 1px solid #333; white-space: pre-wrap; word-break: break-all; }
   </style>
 </head>
 <body>
@@ -23,16 +24,19 @@
 
   <button onclick="run()">تجربة</button>
 
-  <div id="status"></div>
+  <div id="log"></div>
   <img id="result" style="display:none"/>
 
   <script>
     const API_KEY = "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";
-    const NVIDIA_URL = "/api/proxy";
-    // قائمة proxies للتجربة بالترتيب
-    const PROXIES = [
-      () => `/api/proxy`,
-    ];
+
+    function log(msg, color) {
+      const div = document.createElement("div");
+      div.className = "log-line";
+      div.style.color = color || "#eee";
+      div.textContent = msg;
+      document.getElementById("log").appendChild(div);
+    }
 
     async function toBase64(file) {
       return new Promise((resolve, reject) => {
@@ -44,132 +48,97 @@
     }
 
     async function run() {
-      const person  = document.getElementById("person").files[0];
-      const prompt  = document.getElementById("prompt").value.trim();
-      const status  = document.getElementById("status");
-      const result  = document.getElementById("result");
+      const person = document.getElementById("person").files[0];
+      const prompt = document.getElementById("prompt").value.trim();
+      const result = document.getElementById("result");
 
-      console.log("== بدء العملية ==");
+      document.getElementById("log").innerHTML = "";
+      result.style.display = "none";
 
       if (!person || !prompt) {
-        status.className = "err";
-        status.textContent = "يرجى تحديد الصورة وكتابة وصف الملابس";
+        log("❌ يرجى تحديد الصورة وكتابة وصف الملابس", "red");
         return;
       }
 
-      status.className = "";
-      status.textContent = "جاري التحويل والإرسال...";
-      result.style.display = "none";
-
       try {
-        console.log("تحويل الصورة إلى base64...");
+        log("1. تحويل الصورة إلى base64...", "yellow");
         const base64 = await toBase64(person);
-        console.log("تم التحويل، نوع الصورة:", person.type);
+        log("✓ تم - حجم: " + Math.round(base64.length / 1024) + "KB", "lightgreen");
 
         const payload = {
           model: "qwen/qwen-image-edit",
-          messages: [
-            {
-              role: "user",
-              content: [
-                {
-                  type: "image_url",
-                  image_url: { url: base64 }
-                },
-                {
-                  type: "text",
-                  text: `قم بتعديل هذه الصورة: ${prompt}. حافظ على نفس الشخص والخلفية وغيّر الملابس فقط.`
-                }
-              ]
-            }
-          ],
+          messages: [{
+            role: "user",
+            content: [
+              { type: "image_url", image_url: { url: base64 } },
+              { type: "text", text: "قم بتعديل هذه الصورة: " + prompt + ". حافظ على نفس الشخص والخلفية وغيّر الملابس فقط." }
+            ]
+          }],
           max_tokens: 1024,
           temperature: 0.7,
           stream: false
         };
 
-        console.log("إرسال الطلب إلى NVIDIA API...");
-        console.log("النموذج:", payload.model);
+        log("2. إرسال الطلب إلى /api/proxy...", "yellow");
+        const res = await fetch("/api/proxy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
 
-        // محاولة الاتصال عبر proxies بالترتيب
-        let res, rawText, data;
-        let lastError = "";
+        log("3. HTTP Status: " + res.status, res.ok ? "lightgreen" : "orange");
 
-        for (let i = 0; i < PROXIES.length; i++) {
-          const proxyUrl = PROXIES[i](NVIDIA_URL);
-          console.log(`محاولة proxy ${i + 1}:`, proxyUrl);
-          try {
-            res = await fetch(proxyUrl, {
-              method: "POST",
-              headers: {
-                "Authorization": "Bearer " + API_KEY,
-                "Content-Type": "application/json",
-                "Accept": "application/json"
-              },
-              body: JSON.stringify(payload)
-            });
-            rawText = await res.text();
-            console.log(`الرد الخام (proxy ${i+1}):`, rawText.slice(0, 300));
-            // تحقق أن الرد JSON وليس HTML
-            if (rawText.trimStart().startsWith("{") || rawText.trimStart().startsWith("[")) {
-              data = JSON.parse(rawText);
-              console.log("نجح proxy رقم", i + 1);
-              break;
-            } else {
-              lastError = `proxy ${i+1} أعاد محتوى غير JSON: ${rawText.slice(0, 100)}`;
-              console.warn(lastError);
-            }
-          } catch (fetchErr) {
-            lastError = `proxy ${i+1} فشل: ${fetchErr.message}`;
-            console.warn(lastError);
-          }
+        const rawText = await res.text();
+        log("4. الرد الخام: " + rawText.slice(0, 800), "lightblue");
+
+        let data;
+        try {
+          data = JSON.parse(rawText);
+        } catch(e) {
+          log("❌ الرد ليس JSON: " + rawText.slice(0, 300), "red");
+          return;
         }
 
-        if (!data) throw new Error("فشلت جميع محاولات الاتصال.\n" + lastError);
-        console.log("الرد الكامل:", JSON.stringify(data, null, 2));
-
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status} — ${JSON.stringify(data)}`);
+        if (data.error) {
+          log("❌ خطأ من السيرفر: " + JSON.stringify(data.error), "red");
+          return;
         }
 
-        // محاولة استخراج الصورة من الرد
+        if (data.raw) {
+          log("⚠️ رد خام من NVIDIA: " + data.raw.slice(0, 800), "orange");
+          return;
+        }
+
         const content = data.choices?.[0]?.message?.content;
-        console.log("محتوى الرد:", content);
+        log("5. المحتوى: " + JSON.stringify(content).slice(0, 300), "lightblue");
 
-        if (!content) throw new Error("لم يُعد النموذج أي محتوى");
+        if (!content) {
+          log("❌ لا يوجد محتوى في الرد", "red");
+          return;
+        }
 
-        // إذا كان الرد صورة base64
         if (typeof content === "string" && content.startsWith("data:image")) {
           result.src = content;
           result.style.display = "block";
-          status.className = "ok";
-          status.textContent = "تمت العملية بنجاح!";
-        }
-        // إذا كان الرد نصاً (وصف) — نعرضه
-        else if (typeof content === "string") {
-          status.className = "ok";
-          status.textContent = "رد النموذج: " + content;
-          console.log("النموذج أعاد نصاً وليس صورة");
-        }
-        // إذا كان array
-        else if (Array.isArray(content)) {
+          log("✅ تمت العملية بنجاح!", "lightgreen");
+        } else if (Array.isArray(content)) {
           const imgPart = content.find(p => p.type === "image_url");
           const txtPart = content.find(p => p.type === "text");
           if (imgPart) {
             result.src = imgPart.image_url?.url;
             result.style.display = "block";
-            status.className = "ok";
-            status.textContent = "تمت العملية بنجاح!";
+            log("✅ تمت العملية بنجاح!", "lightgreen");
           } else if (txtPart) {
-            status.className = "ok";
-            status.textContent = "رد النموذج: " + txtPart.text;
+            log("رد النموذج (نص): " + txtPart.text, "lightblue");
+          } else {
+            log("⚠️ محتوى غير معروف: " + JSON.stringify(content), "orange");
           }
+        } else {
+          log("رد النموذج: " + content, "lightblue");
         }
 
       } catch(e) {
-        console.error("خطأ:", e);
-        status.className  = "err";
-        status.textContent = "خطأ: " + e.message;
+        log("❌ خطأ: " + e.message, "red");
       }
     }
   </script>
