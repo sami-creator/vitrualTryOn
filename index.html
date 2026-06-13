@@ -83,7 +83,10 @@
         const res = await fetch("/api/proxy", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
+          body: JSON.stringify({
+  image: base64.split(",")[1],
+  prompt: "قم بتعديل هذه الصورة: " + prompt + ". حافظ على نفس الشخص والخلفية وغيّر الملابس فقط."
+})
         });
 
         log("3. HTTP Status: " + res.status, res.ok ? "lightgreen" : "orange");
