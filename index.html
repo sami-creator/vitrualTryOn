@@ -31,8 +31,7 @@
     const NVIDIA_URL = "/api/proxy";
     // قائمة proxies للتجربة بالترتيب
     const PROXIES = [
-      url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-      url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+      () => `/api/proxy`,
     ];
 
     async function toBase64(file) {
