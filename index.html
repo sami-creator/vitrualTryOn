@@ -120,24 +120,12 @@
           return;
         }
 
-        if (typeof content === "string" && content.startsWith("data:image")) {
-          result.src = content;
+        if (data.data?.[0]?.b64_json) {
+          result.src = "data:image/png;base64," + data.data[0].b64_json;
           result.style.display = "block";
           log("✅ تمت العملية بنجاح!", "lightgreen");
-        } else if (Array.isArray(content)) {
-          const imgPart = content.find(p => p.type === "image_url");
-          const txtPart = content.find(p => p.type === "text");
-          if (imgPart) {
-            result.src = imgPart.image_url?.url;
-            result.style.display = "block";
-            log("✅ تمت العملية بنجاح!", "lightgreen");
-          } else if (txtPart) {
-            log("رد النموذج (نص): " + txtPart.text, "lightblue");
-          } else {
-            log("⚠️ محتوى غير معروف: " + JSON.stringify(content), "orange");
-          }
         } else {
-          log("رد النموذج: " + content, "lightblue");
+          log("⚠️ شكل الرد غير متوقع: " + JSON.stringify(data).slice(0, 500), "orange");
         }
 
       } catch(e) {
