@@ -2,10 +2,14 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Headers", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  
   if (req.method === "OPTIONS") return res.status(200).end();
 
   try {
+    let bodyStr;
+    if (typeof req.body === "string") bodyStr = req.body;
+    else if (Buffer.isBuffer(req.body)) bodyStr = req.body.toString();
+    else bodyStr = JSON.stringify(req.body);
+
     const response = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -13,15 +17,32 @@ export default async function handler(req, res) {
         "Content-Type": "application/json",
         "Accept": "application/json"
       },
-      body: typeof req.body === "string" ? req.body : JSON.stringify(req.body)
+      body: bodyStr
     });
 
-    const text = await response.text();
-    const cleaned = text.split("\n")
-      .find(line => line.startsWith("data: ") && !line.includes("[DONE]"));
-    const data = cleaned ? JSON.parse(cleaned.replace("data: ", "")) : JSON.parse(text);
-    res.status(response.status).json(data);
+    const rawText = await response.text();
+
+    // محاولة 1: JSON مباشر
+    if (rawText.trimStart().startsWith("{")) {
+      try {
+        const data = JSON.parse(rawText);
+        return res.status(response.status).json(data);
+      } catch(e) {}
+    }
+
+    // محاولة 2: SSE format (data: {...})
+    const lines = rawText.split("\n").filter(l => l.startsWith("data: ") && !l.includes("[DONE]"));
+    if (lines.length > 0) {
+      try {
+        const data = JSON.parse(lines[0].replace("data: ", ""));
+        return res.status(200).json(data);
+      } catch(e) {}
+    }
+
+    // إذا فشل كل شيء: أرجع النص الخام
+    return res.status(200).json({ raw: rawText, status: response.status });
+
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message, stack: err.stack });
   }
 }
